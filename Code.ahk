@@ -1,213 +1,155 @@
-#UseHook On
+#Requires AutoHotkey v1.1.33+
+#NoEnv
 #SingleInstance Force
+#UseHook On
 
-#Persistent
-Menu, Tray, Tip , Windows Helper
+Menu, Tray, Tip, Windows Helper
+fullscreenWindows := {}
+windowMarker := "WindowsHelper.Fullscreen." DllCall("GetCurrentProcessId", "UInt")
+OnExit("RestoreFullscreenWindows")
+return
 
+^!a::
+    Critical
+    ToggleFullscreen(WinExist("A"))
+    Critical, Off
+    KeyWait, a
+return
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Switch window to borderless mode
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-^!A::
-WinGet, TempWindowID, ID, A
-If (WindowID != TempWindowID)
-{
-WindowID:=TempWindowID
-WindowState:=0
-}
-If (WindowState != 1)
-{
-WinGetPos, WinPosX, WinPosY, WindowWidth, WindowHeight, ahk_id %WindowID%
-WinSet, Style, -0xC40000, ahk_id %WindowID%
-WinMove, ahk_id %WindowID%, , 0, 0, A_ScreenWidth, A_ScreenHeight
-}
-Else
-{
-WinSet, Style, +0xC40000, ahk_id %WindowID%
-WinMove, ahk_id %WindowID%, , WinPosX, WinPosY, WindowWidth, WindowHeight
-WinShow ahk_class Shell_TrayWnd
-WinShow Start ahk_class Button
-}
-WindowState:=!WindowState
-Return
-
-
-;;;;;;;;;;;;;;;;;;;
-; Take a screenshot
-;;;;;;;;;;;;;;;;;;;
-
-Scrolllock::#+s
-
-
-;;;;;;;;;;;;;;;;;;;;;;;
-; Put computer to sleep
-;;;;;;;;;;;;;;;;;;;;;;;
+ScrollLock::#+s
 
 Pause::
-Send #x
-Sleep 250
-Send u
-Sleep 250
-Send s
+    error := RequestSleep()
+    if (error)
+        TrayTip, Windows Helper, Sleep request failed (Windows error %error%)., 5, 3
+return
 
+ToggleFullscreen(hwnd)
+{
+    global fullscreenWindows, windowMarker
+    static frameStyle := 0xC40000, edgeStyle := 0x20301
+    static showStateStyle := 0x21000000 ; WS_MINIMIZE | WS_MAXIMIZE
+    static frameChanged := 0x34 ; SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Refresh system tray icons
-;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    if (!hwnd)
+        return
 
-tray_iconCleanup()
+    ; A destroyed window loses the marker even if Windows reuses its handle.
+    for savedHwnd in fullscreenWindows.Clone()
+        if (!DllCall("GetPropW", "Ptr", savedHwnd, "WStr", windowMarker, "Ptr"))
+            fullscreenWindows.Delete(savedHwnd)
 
-tray_icons()
-{
-static TB_BUTTONCOUNT := 0x0418, TB_GETBUTTON := 0x0417
-array := []
-array[0] := ["sProcess","toolTip","nMsg","uID","idx","idn","Pid","hwnd","sClass","hIcon"]
-Index := 0
-detectHiddenWindows_old := a_detectHiddenWindows
-detectHiddenWindows, on
-trayWindows := "Shell_TrayWnd,NotifyIconOverflowWindow"
-loop, parse, trayWindows, csv
-{
-winGet, taskbar_pid, PID, ahk_class %a_loopField%
-hProc := dllCall( "OpenProcess", "Uint", 0x38, "int", 0, "Uint", taskbar_pid )
-pProc := dllCall( "VirtualAllocEx", "Uint", hProc, "Uint", 0, "Uint", 32, "Uint", 0x1000, "Uint", 0x4 )
-idxTB := tray_getTrayBar()
-sendMessage, %TB_BUTTONCOUNT%, 0, 0, ToolbarWindow32%idxTB%, ahk_class %a_loopField%
-loop, %errorLevel%
-{
-sendMessage, %TB_GETBUTTON%, a_index-1, pProc, ToolbarWindow32%idxTB%, ahk_class %a_loopField%
-varSetCapacity( btn,32,0 ), varSetCapacity( nfo,32,0 )
-dllCall( "ReadProcessMemory", "Uint", hProc, "Uint", pProc, "Uint", &btn, "Uint", 32, "Uint", 0 )
-iBitmap := numGet( btn, 0 )
-idn := numGet( btn, 4 )
-Statyle := numGet( btn, 8 )
-if dwData := numGet( btn,12,"Uint" )
-iString := numGet( btn,16 )
-else dwData := numGet( btn,16,"int64" ), iString := numGet( btn,24,"int64" )
-dllCall( "ReadProcessMemory", "Uint", hProc, "Uint", dwData, "Uint", &nfo, "Uint", 32, "Uint", 0 )
-if numGet( btn,12,"Uint" )
-{
-hwnd := numGet( nfo, 0 )
-uID := numGet( nfo, 4 )
-nMsg := numGet( nfo, 8 )
-hIcon := numGet( nfo,20 )
+    if (fullscreenWindows.HasKey(hwnd))
+    {
+        RestoreWindow(hwnd, fullscreenWindows[hwnd])
+        return
+    }
+
+    monitor := DllCall("MonitorFromWindow", "Ptr", hwnd, "UInt", 2, "Ptr")
+    VarSetCapacity(info, 40, 0) ; MONITORINFO
+    NumPut(40, info, 0, "UInt")
+    if (!DllCall("GetMonitorInfoW", "Ptr", monitor, "Ptr", &info))
+        return
+
+    state := {style: DllCall("GetWindowLongW", "Ptr", hwnd, "Int", -16, "UInt")
+            , exStyle: DllCall("GetWindowLongW", "Ptr", hwnd, "Int", -20, "UInt")}
+    state.SetCapacity("placement", 44) ; WINDOWPLACEMENT
+    placement := state.GetAddress("placement")
+    NumPut(44, placement + 0, 0, "UInt")
+    if (!DllCall("GetWindowPlacement", "Ptr", hwnd, "Ptr", placement)
+        || !DllCall("SetPropW", "Ptr", hwnd, "WStr", windowMarker, "Ptr", 1))
+        return
+
+    fullscreenWindows[hwnd] := state
+    if (state.style & showStateStyle)
+        DllCall("ShowWindow", "Ptr", hwnd, "Int", 9) ; SW_RESTORE
+
+    left := NumGet(info, 4, "Int")
+    top := NumGet(info, 8, "Int")
+    width := NumGet(info, 12, "Int") - left
+    height := NumGet(info, 16, "Int") - top
+    if (!SetWindowStyle(hwnd, -16, state.style & ~(frameStyle | showStateStyle))
+        || !SetWindowStyle(hwnd, -20, state.exStyle & ~edgeStyle)
+        || !DllCall("SetWindowPos", "Ptr", hwnd, "Ptr", 0, "Int", left, "Int", top
+                  , "Int", width, "Int", height, "UInt", frameChanged))
+        RestoreWindow(hwnd, state)
 }
-else hwnd := numGet( nfo, 0,"int64" ), uID := numGet( nfo, 8,"Uint" ), nMsg := numGet( nfo,12,"Uint" )
-winGet, pid, PID, ahk_id %hwnd%
-winGet, sProcess, ProcessName, ahk_id %hwnd%
-winGetClass, sClass, ahk_id %hwnd%
- 
-varSetCapacity( sTooltip,128 ), varSetCapacity( wTooltip,128*2 )
-dllCall( "ReadProcessMemory", "Uint", hProc, "Uint", iString, "Uint", &wTooltip, "Uint", 128*2, "Uint", 0 )
-dllCall( "WideCharToMultiByte", "Uint", 0, "Uint", 0, "str", wTooltip, "int", -1, "str", sTooltip, "int", 128, "Uint", 0, "Uint", 0 )
-idx := a_index-1
-toolTip := a_isUnicode ? wTooltip : sTooltip
-Index++
-for a,b in array[0]
-array[Index,b] := %b%
-}
-dllCall( "VirtualFreeEx", "Uint", hProc, "Uint", pProc, "Uint", 0, "Uint", 0x8000 )
-dllCall( "CloseHandle", "Uint", hProc )
-}
-detectHiddenWindows, %detectHiddenWindows_old%
-return array
-}
- 
-tray_iconCleanup()
+
+SetWindowStyle(hwnd, index, style)
 {
-/*
-remove orphan icons ( Their processes have been killed )
-*/
-tray_icons := tray_icons()
-for index in tray_icons
-{
-ifEqual,index,0,continue
-if ( tray_icons[index, "sProcess"] = "" )
-tray_iconRemove( tray_icons[index, "hwnd"], tray_icons[index, "uID"],"", tray_icons[index, "hIcon"] )
+    DllCall("SetLastError", "UInt", 0)
+    previous := DllCall("SetWindowLongW", "Ptr", hwnd, "Int", index, "UInt", style, "UInt")
+    return previous || !A_LastError
 }
-}
- 
-tray_iconRemove( hwnd, uID, nMsg = 0, hIcon = 0, nRemove = 0x2 )
+
+RestoreWindow(hwnd, state)
 {
-/*
-NIM_DELETE := 0x00000002
- 
-typedef struct _NOTIFYICONDATA {
-DWORD cbSize; x00
-hwnd hwnd; x04
-UINT uID; x0c/d12
-UINT uFlags; x10/d16
-UINT uCallbackMessage; x14/d20
-HICON hIcon; x18/d24
-TCHAR szTip[64]; x20 ( UNICODE )
-DWORD dwState; xa0
-DWORD dwStateMask; xa4
-TCHAR szInfo[256]; xa8 ( UNICODE )
-union {
-UINT uTimeout; x01a8
-UINT uVersion; x01a8
-};
-TCHAR szInfoTitle[64]; x01ac ( UNICODE )
-DWORD dwInfoFlags; x022c
-GUID guidItem; ( 128bits ) x0230
-HICON hBalloonIcon; x023c
-;end x0244
-} NOTIFYICONDATA, *PNOTIFYICONDATA;
- 
-MSDN:
-http://msdn.microsoft.com/en-us/library/windows/desktop/bb773352%28v=vs.85%29.aspx
-*/
-varSetCapacity( nid,size := 936+4*a_ptrSize )
-numPut( size, nid, 0, "uint" )
-numPut( hwnd, nid, a_ptrSize )
-numPut( uID, nid,a_ptrSize*2, "uint" )
-numPut( 1|2|4, nid,a_ptrSize*3, "uint" )
-numPut( nMsg , nid,a_ptrSize*4, "uint" )
-numPut( hIcon, nid,a_ptrSize*5, "uint" )
-return dllCall( "shell32\Shell_NotifyIconA", "Uint", nRemove, "Uint", &nid )
+    global fullscreenWindows, windowMarker
+    static showStateStyle := 0x21000000 ; WS_MINIMIZE | WS_MAXIMIZE
+    static refreshFrame := 0x37 ; Frame changed, with position, size, activation, and Z order preserved.
+
+    if (!DllCall("GetPropW", "Ptr", hwnd, "WStr", windowMarker, "Ptr"))
+        return
+
+    ; SetWindowPlacement restores the show state as well as the normal bounds.
+    currentStyle := DllCall("GetWindowLongW", "Ptr", hwnd, "Int", -16, "UInt")
+    restoredStyle := (state.style & ~showStateStyle) | (currentStyle & showStateStyle)
+    if (!SetWindowStyle(hwnd, -16, restoredStyle)
+        || !SetWindowStyle(hwnd, -20, state.exStyle)
+        || !DllCall("SetWindowPlacement", "Ptr", hwnd, "Ptr", state.GetAddress("placement"))
+        || !DllCall("SetWindowPos", "Ptr", hwnd, "Ptr", 0, "Int", 0, "Int", 0
+                  , "Int", 0, "Int", 0, "UInt", refreshFrame))
+        return
+
+    DllCall("RemovePropW", "Ptr", hwnd, "WStr", windowMarker, "Ptr")
+    fullscreenWindows.Delete(hwnd)
 }
- 
-tray_iconHide( idn, bHide = true )
+
+RestoreFullscreenWindows(exitReason, exitCode)
 {
-static TB_HIDEBUTTON := 0x404, WM_SETTINGCHANGE := 0x001A
-idxTB := tray_getTrayBar()
-sendMessage, %TB_HIDEBUTTON%, idn, bHide, ToolbarWindow32%idxTB%, ahk_class Shell_TrayWnd	;NotifyIconOverflowWindow
-sendMessage, %WM_SETTINGCHANGE%, 0, 0, , ahk_class Shell_TrayWnd
+    global fullscreenWindows
+    for hwnd, state in fullscreenWindows.Clone()
+        RestoreWindow(hwnd, state)
 }
- 
-tray_iconDelete( idx )
+
+RequestSleep()
 {
-static TB_DELETEBUTTON := 0x416, WM_SETTINGCHANGE := 0x001A
-idxTB := tray_getTrayBar()
-sendMessage, %TB_DELETEBUTTON%, idx - 1, 0, ToolbarWindow32%idxTB%, ahk_class Shell_TrayWnd
-sendMessage, %WM_SETTINGCHANGE%, 0, 0, , ahk_class Shell_TrayWnd
-}
- 
-tray_iconMove( idxOld, idxNew )
-{
-static TB_MOVEBUTTON := 0x452
-idxTB := tray_getTrayBar()
-sendMessage, %TB_MOVEBUTTON%, idxOld - 1, idxNew - 1, ToolbarWindow32%idxTB%, ahk_class Shell_TrayWnd
-}
- 
-tray_getTrayBar()
-{
-detectHiddenWindows_old := a_detectHiddenWindows
-detectHiddenWindows, on
-controlGet, hParent, hwnd,, TrayNotifyWnd1 , ahk_class Shell_TrayWnd
-controlGet, hChild , hwnd,, ToolbarWindow321, ahk_id %hParent%
-loop
-{
-controlGet, hwnd, hwnd,, ToolbarWindow32%a_index%, ahk_class Shell_TrayWnd
-if !hwnd
-break
-else if ( hwnd = hChild )
-{
-idxTB := a_index
-break
-}
-}
-detectHiddenWindows, %detectHiddenWindows_old%
-return idxTB
+    static tokenAccess := 0x28 ; TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY
+    static privilegeSize := 16 ; TOKEN_PRIVILEGES with one LUID_AND_ATTRIBUTES
+    static genericFailure := 31 ; ERROR_GEN_FAILURE
+
+    process := DllCall("GetCurrentProcess", "Ptr")
+    if (!DllCall("Advapi32\OpenProcessToken", "Ptr", process, "UInt", tokenAccess, "PtrP", token))
+        return A_LastError ? A_LastError : genericFailure
+
+    try
+    {
+        VarSetCapacity(privilege, privilegeSize, 0)
+        NumPut(1, privilege, 0, "UInt")
+        if (!DllCall("Advapi32\LookupPrivilegeValueW", "Ptr", 0, "WStr", "SeShutdownPrivilege"
+                   , "Ptr", &privilege + 4))
+            return A_LastError ? A_LastError : genericFailure
+
+        NumPut(2, privilege, 12, "UInt") ; SE_PRIVILEGE_ENABLED
+        VarSetCapacity(previous, privilegeSize, 0)
+        if (!DllCall("Advapi32\AdjustTokenPrivileges", "Ptr", token, "Int", 0, "Ptr", &privilege
+                   , "UInt", privilegeSize, "Ptr", &previous, "UIntP", previousSize) || A_LastError)
+            return A_LastError ? A_LastError : genericFailure
+
+        try
+        {
+            if (DllCall("PowrProf\SetSuspendState", "UChar", 0, "UChar", 0, "UChar", 0, "UChar"))
+                return 0
+            return A_LastError ? A_LastError : genericFailure
+        }
+        finally
+        {
+            DllCall("Advapi32\AdjustTokenPrivileges", "Ptr", token, "Int", 0, "Ptr", &previous
+                  , "UInt", 0, "Ptr", 0, "Ptr", 0)
+        }
+    }
+    finally
+    {
+        DllCall("CloseHandle", "Ptr", token)
+    }
 }
