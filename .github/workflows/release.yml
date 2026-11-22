@@ -1,0 +1,88 @@
+name: Release Windows Helper
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-helper-release-${{ github.ref }}
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.created
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Validate release tag
+        id: version
+        if: github.event_name == 'push'
+        run: |
+          $number = '(?:0|[1-9][0-9]*)'
+          $prereleaseId = "(?:$number|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+          $metadataId = '[0-9A-Za-z-]+'
+          $pattern = "^v$number\.$number\.$number(?:-(?<prerelease>$prereleaseId(?:\.$prereleaseId)*))?(?:\+$metadataId(?:\.$metadataId)*)?$"
+          $version = [regex]::Match($env:GITHUB_REF_NAME, $pattern)
+          if (!$version.Success) { throw "Invalid semantic version tag: $env:GITHUB_REF_NAME" }
+          if ($version.Groups['prerelease'].Success) { 'prerelease=true' >> $env:GITHUB_OUTPUT }
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Build the x64 executable
+        run: |
+          function Expand-VerifiedZip($uri, $sha256, $destination) {
+            $archive = "$destination.zip"
+            Invoke-WebRequest -Uri $uri -OutFile $archive -MaximumRetryCount 2 -RetryIntervalSec 3
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $sha256) {
+              throw "Checksum mismatch for $uri"
+            }
+            Expand-Archive -LiteralPath $archive -DestinationPath $destination
+          }
+
+          $runtimeDir = Join-Path $env:RUNNER_TEMP 'autohotkey'
+          $compilerDir = Join-Path $env:RUNNER_TEMP 'ahk2exe'
+          Expand-VerifiedZip 'https://github.com/AutoHotkey/AutoHotkey/releases/download/v1.1.37.02/AutoHotkey_1.1.37.02.zip' '6f3663f7cdd25063c8c8728f5d9b07813ced8780522fd1f124ba539e2854215f' $runtimeDir
+          Expand-VerifiedZip 'https://github.com/AutoHotkey/Ahk2Exe/releases/download/Ahk2Exe1.1.37.02a2/Ahk2Exe1.1.37.02a2.zip' 'c29b8c3a5124850d79fc9e66e2ca79677c377d7f31631ad3022ba159c5d9e3be' $compilerDir
+
+          $runtime = Join-Path $runtimeDir 'AutoHotkeyU64.exe'
+          $compiler = Join-Path $compilerDir 'Ahk2Exe.exe'
+          $exe = Join-Path $env:RUNNER_TEMP 'WindowsHelper.exe'
+          & $compiler /in Code.ahk /out $exe /base $runtime /ahk $runtime /icon Icon.ico /compress 0 /silent verbose | Out-Host
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "Ahk2Exe failed to build WindowsHelper.exe (exit $LASTEXITCODE)."
+          }
+          Get-FileHash -LiteralPath $exe -Algorithm SHA256
+
+      - name: Upload test build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: WindowsHelper
+          path: ${{ runner.temp }}/WindowsHelper.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $encodedTag = [uri]::EscapeDataString($tag)
+          $tagCommit = gh api "repos/$env:GITHUB_REPOSITORY/commits/$encodedTag" --jq '.sha'
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -ne (git rev-parse HEAD)) {
+            throw "The pushed tag no longer points to the built commit: $tag"
+          }
+
+          $releaseFlags = @()
+          if ($env:IS_PRERELEASE -eq 'true') { $releaseFlags += '--prerelease', '--latest=false' }
+          $exe = Join-Path $env:RUNNER_TEMP 'WindowsHelper.exe'
+          gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes --title "Windows Helper $tag" @releaseFlags
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish $tag." }

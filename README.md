@@ -22,6 +22,17 @@ Download `WindowsHelper.exe` from [Releases](https://github.com/notuxius/windows
 
 3. Run the resulting `WindowsHelper.exe` and check for the Windows Helper tray icon.
 
+## Release
+
+Push a new [semantic version](https://semver.org/) tag to publish the x64 `WindowsHelper.exe` on GitHub. For example, after committing a patch release:
+
+```powershell
+git tag -a v1.1.1 -m "Windows Helper v1.1.1"
+git push origin refs/tags/v1.1.1
+```
+
+The **Release Windows Helper** workflow builds the tagged commit and generates release notes. Tags like `v1.2.0-rc.1` publish as prereleases. For a build-only check, run the workflow manually from the **Actions** tab and download the `WindowsHelper` artifact.
+
 ## Smoke test
 
 1. Open two resizable windows at different sizes and positions. Press **Ctrl+Alt+A** on each, then switch back and toggle each off. Both should return to their original size, position, and frame. Repeat with a maximized window and an already-borderless window. Hold the shortcut down once and check that it toggles only once.
