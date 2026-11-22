@@ -31,7 +31,7 @@ git tag -a v1.1.1 -m "Windows Helper v1.1.1"
 git push origin refs/tags/v1.1.1
 ```
 
-The **Release Windows Helper** workflow builds the tagged commit and generates release notes. Tags like `v1.2.0-rc.1` publish as prereleases. For a build-only check, run the workflow manually from the **Actions** tab and download the `WindowsHelper` artifact.
+The **Release Windows Helper** workflow builds the tagged commit and publishes it with generated release notes after the executable starts and responds. Tags like `v1.2.0-rc.1` publish as prereleases. For a build-only check, run the workflow manually from the **Actions** tab and download the `WindowsHelper` artifact.
 
 ## Smoke test
 

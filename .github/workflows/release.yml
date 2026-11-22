@@ -59,6 +59,10 @@ jobs:
           }
           Get-FileHash -LiteralPath $exe -Algorithm SHA256
 
+      - name: Smoke test executable startup
+        id: startup
+        run: ./.github/scripts/Test-Startup.ps1 -Path (Join-Path $env:RUNNER_TEMP 'WindowsHelper.exe')
+
       - name: Upload test build
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -69,7 +73,7 @@ jobs:
           retention-days: 7
 
       - name: Publish GitHub release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && steps.startup.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
