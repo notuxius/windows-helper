@@ -1,3 +1,7 @@
+; Copyright (C) 2026 Alexander Mentyu
+; SPDX-License-Identifier: GPL-2.0-only
+; See LICENSE for the full terms and warranty disclaimer.
+
 #Requires AutoHotkey v1.1.33+
 #NoEnv
 #SingleInstance Force
