@@ -40,3 +40,7 @@ The **Release Windows Helper** workflow builds the tagged commit and publishes i
 3. Toggle a window to fullscreen, then choose **Exit** from the Windows Helper tray menu. Check that the window restores, then relaunch the app.
 4. Press **Scroll Lock**, verify that the snipping overlay appears, and press **Esc** to dismiss it.
 5. On a machine where you can safely interrupt your session, press **Pause**. If sleep is available to your account, the machine should sleep and resume normally. If Windows rejects the request, check for the error notification.
+
+## License
+
+Windows Helper is licensed under the [GNU General Public License, version 2 only](LICENSE). The release’s `WindowsHelper-source.zip` contains this version’s source and the source and license notices for the bundled AutoHotkey v1.1.37.02 runtime.

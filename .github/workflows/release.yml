@@ -63,12 +63,27 @@ jobs:
         id: startup
         run: ./.github/scripts/Test-Startup.ps1 -Path (Join-Path $env:RUNNER_TEMP 'WindowsHelper.exe')
 
+      - name: Package corresponding source
+        run: |
+          $appSource = Join-Path $env:RUNNER_TEMP 'WindowsHelper-app.zip'
+          git archive --format=zip --prefix=WindowsHelper/ -o $appSource HEAD
+          if ($LASTEXITCODE -ne 0) { throw "Could not archive the Windows Helper source." }
+
+          $runtimeSource = Join-Path $env:RUNNER_TEMP 'AutoHotkey-v1.1.37.02-source.zip'
+          $runtimeSourceUrl = 'https://codeload.github.com/AutoHotkey/AutoHotkey/zip/16ea5db9247812593c53bbb0444422524cf1a1df'
+          Invoke-WebRequest -Uri $runtimeSourceUrl -OutFile $runtimeSource -MaximumRetryCount 2 -RetryIntervalSec 3
+
+          $sources = Join-Path $env:RUNNER_TEMP 'WindowsHelper-source.zip'
+          Compress-Archive -LiteralPath $appSource, $runtimeSource -DestinationPath $sources
+
       - name: Upload test build
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: WindowsHelper
-          path: ${{ runner.temp }}/WindowsHelper.exe
+          path: |
+            ${{ runner.temp }}/WindowsHelper.exe
+            ${{ runner.temp }}/WindowsHelper-source.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -88,5 +103,6 @@ jobs:
           $releaseFlags = @()
           if ($env:IS_PRERELEASE -eq 'true') { $releaseFlags += '--prerelease', '--latest=false' }
           $exe = Join-Path $env:RUNNER_TEMP 'WindowsHelper.exe'
-          gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes --title "Windows Helper $tag" @releaseFlags
+          $sources = Join-Path $env:RUNNER_TEMP 'WindowsHelper-source.zip'
+          gh release create $tag $exe $sources --repo $env:GITHUB_REPOSITORY --verify-tag --generate-notes --title "Windows Helper $tag" @releaseFlags
           if ($LASTEXITCODE -ne 0) { throw "Could not publish $tag." }
